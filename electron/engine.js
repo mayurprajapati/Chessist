@@ -33,6 +33,7 @@ class Engine {
     this._path = null         // stockfish path (for auto-restart)
     this._intentional = false // suppress restart on deliberate kill
     this._restarts = 0        // bounded auto-restart counter
+    this._pending = null      // [fen, depth, multipv] requested before readyok
     this.hashMb = opts.hashMb || defaultHashMb()
     this.threads = opts.threads || Math.max(1, os.cpus().length - 1)
     // Engine settings owned by the desktop app (Engine page). Re-applied on every
@@ -50,7 +51,15 @@ class Engine {
   start(stockfishPath) {
     if (stockfishPath) this._path = stockfishPath
     this._intentional = false
-    const proc = spawn(this._path, [], { windowsHide: true })
+    const fail = (e) => {
+      this.proc = null
+      this.onStatus?.({ status: 'error', message: `Stockfish: failed to start (${e.code || e.message})` })
+    }
+    // An unrunnable binary (e.g. wrong CPU architecture) makes spawn throw
+    // synchronously; a missing one errors asynchronously with no 'exit'. Report
+    // both — otherwise the app sits on "starting" forever.
+    let proc
+    try { proc = spawn(this._path, [], { windowsHide: true }) } catch (e) { fail(e); return }
     this.proc = proc
     proc.stdout.setEncoding('utf8')
     let buf = ''
@@ -65,12 +74,14 @@ class Engine {
     })
     // Swallow stream errors (e.g. EPIPE when Stockfish dies mid-write) so they
     // never become an uncaught exception that crashes the app.
-    proc.on('error', () => {})
+    proc.on('error', (e) => { if (!proc.pid && this.proc === proc) fail(e) })
     proc.stdin.on('error', () => {})
     proc.stdout.on('error', () => {})
     proc.on('exit', () => {
+      // A replaced process (kill + restart) must not mark the live one not-ready.
+      if (this.proc !== proc) return
+      this.proc = null
       this.ready = false
-      if (this.proc === proc) this.proc = null
       if (this._intentional) return
       this.onStatus?.({ status: 'error', message: 'Stockfish exited' })
       // Bounded auto-restart so a one-off crash recovers without looping forever.
@@ -99,6 +110,7 @@ class Engine {
       this.ready = true
       this._restarts = 0
       this.onStatus?.({ status: 'ready', message: 'Engine ready' })
+      if (this._pending) { const p = this._pending; this._pending = null; this.evaluate(...p) }
       return
     }
     if (line.startsWith('info depth')) {
@@ -133,7 +145,9 @@ class Engine {
   }
 
   evaluate(fen, depth, multipv) {
-    if (!this.ready) return
+    // The extension only re-requests on a board change, so a request that arrives
+    // while the engine is still starting is kept and run on readyok.
+    if (!this.ready) { this._pending = [fen, depth, multipv]; return }
     if (depth) this.depth = depth
     if (multipv && multipv !== this.multipv) { this.multipv = multipv; this._send(`setoption name MultiPV value ${multipv}`) }
     this.curFen = fen

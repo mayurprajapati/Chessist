@@ -28,3 +28,29 @@ describe('defaultHashMb', () => {
     expect(v).toBeLessThanOrEqual(1024)
   })
 })
+
+import { Engine } from './engine.js'
+
+describe('Engine', () => {
+  const FEN = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1'
+
+  it('runs an evaluate request that arrived before readyok', () => {
+    const engine = new Engine(null, null)
+    const sent = []
+    engine._send = (cmd) => sent.push(cmd)
+    engine.evaluate(FEN, 12, 1)
+    expect(sent).toEqual([])
+    engine._handle('readyok')
+    expect(sent).toContain('position fen ' + FEN)
+    expect(sent).toContain('go depth 12')
+  })
+
+  it('reports an error instead of hanging when Stockfish cannot be spawned', async () => {
+    const statuses = []
+    const engine = new Engine(null, (s) => statuses.push(s))
+    expect(() => engine.start('Z:/no/such/dir/stockfish.exe')).not.toThrow()
+    await new Promise((r) => setTimeout(r, 200))
+    expect(statuses.some((s) => s.status === 'error')).toBe(true)
+    expect(engine.proc).toBeNull()
+  })
+})

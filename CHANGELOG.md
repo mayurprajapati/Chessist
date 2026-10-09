@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Stockfish stuck on "starting" / auto-move never playing** — Stockfish 19 ships one `universal`
+  build per architecture, and the downloader fell back to the first Windows zip: the ARM64 build,
+  which can't run on x64 PCs. It now picks the build for the host CPU, and a wrong-architecture or
+  corrupt `stockfish.exe` from an earlier download is replaced automatically on launch
+- Engine launch and download failures now show as an error instead of leaving the status on "starting"
+- An eval requested while the engine is still starting is run once it's ready (auto-move no longer
+  waits for the next move)
+
 ## [2.0.2] — 2026-06-09
 
 ### Fixed

@@ -120,13 +120,23 @@ async function startSubsystems() {
   bridge.onPosition = (p) => sendToRenderer('position', p)
   bridge.start()
   overlay.start()
+  await launchStockfish()
+}
 
-  const userData = app.getPath('userData')
-  const sfPath = await ensureStockfish(userData, (s) => {
+// Resolve (downloading if needed) and start Stockfish. Failures (offline, GitHub
+// rate limit, …) surface as a status message instead of an unhandled rejection
+// that leaves the UI on "starting".
+async function launchStockfish() {
+  const onStatus = (s) => {
     pushStatus({ message: s.message, stockfishOk: s.status === 'ready' })
     bridge?.broadcastStatus(s)
-  })
-  if (sfPath) engine.start(sfPath)
+  }
+  try {
+    const sfPath = await ensureStockfish(app.getPath('userData'), onStatus)
+    if (sfPath) engine.start(sfPath)
+  } catch (e) {
+    onStatus({ status: 'error', message: `Stockfish: download failed (${e.code || e.message})` })
+  }
 }
 
 async function redownloadStockfish() {
@@ -134,11 +144,7 @@ async function redownloadStockfish() {
   const dest = path.join(app.getPath('userData'), 'stockfish.exe')
   try { fs.rmSync(dest, { force: true }) } catch {}
   pushStatus({ stockfishOk: false, message: 'Stockfish: re-downloading...' })
-  const sfPath = await ensureStockfish(app.getPath('userData'), (s) => {
-    pushStatus({ message: s.message, stockfishOk: s.status === 'ready' })
-    bridge?.broadcastStatus(s)
-  })
-  if (sfPath) engine.start(sfPath)
+  await launchStockfish()
 }
 
 function registerIpc() {
